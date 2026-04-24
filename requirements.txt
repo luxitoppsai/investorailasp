@@ -10,11 +10,11 @@ requests>=2.31.0
 # Feature engineering
 pandas>=2.2.0
 numpy>=1.26.0
-pandas-ta>=0.3.14b
+# pandas-ta omitted: no wheel for Python 3.11 on Render; code has graceful fallback
 
 # ML - unsupervised
 scikit-learn>=1.5.0
-hdbscan>=0.8.33
+# hdbscan omitted: requires numba which has no wheel for Python 3.11+ on Render; code falls back to KMeans
 
 # ML - supervised
 xgboost>=2.0.0
