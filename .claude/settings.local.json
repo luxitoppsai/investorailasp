@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "Bash(\"C:\\\\Users\\\\luis1\\\\miniconda3\\\\envs\\\\asesorfinan\\\\python.exe\" -m pip install \"fastapi>=0.111.0\" \"uvicorn[standard]>=0.30.0\" \"python-telegram-bot>=21.0\")"
+    ]
+  }
+}

@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: asesorfinan-bot
+    env: python
+    region: oregon
+    plan: free
+    buildCommand: pip install -r requirements.txt && pip install -e .
+    startCommand: uvicorn api.server:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false          # set manually in Render dashboard
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: FRED_API_KEY
+        sync: false
+      - key: ALPHA_VANTAGE_API_KEY
+        sync: false
+      - key: PYTHON_VERSION
+        value: "3.11.9"
