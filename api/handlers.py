@@ -429,9 +429,15 @@ def _format_result(state) -> str:
     if portfolio:
         parts.append("📊 *Portafolio Recomendado*\n")
         for a in portfolio.allocations:
+            if a.predicted_return_pct > 0.5:
+                pred_icon = "▲"
+            elif a.predicted_return_pct < -0.5:
+                pred_icon = "▼"
+            else:
+                pred_icon = "➡"
             parts.append(
                 f"• *{a.ticker}* — {a.weight*100:.1f}% · ${a.amount_usd:,.0f} "
-                f"| {a.cluster_label} | ret: {a.predicted_return_pct:+.1f}%"
+                f"| {pred_icon} {a.predicted_return_pct:+.1f}% | {a.cluster_label}"
             )
         parts.append(
             f"\n📈 Retorno: *{portfolio.expected_annual_return*100:.1f}%* "

@@ -44,7 +44,7 @@ class PortfolioOptimizerAgent:
         logger.info("Building portfolio for %d assets | profile: %s", len(tickers), profile.risk_profile)
 
         mu, S = self._expected_returns_and_cov(prices, pred_map, profile)
-        weights = self._optimize(mu, S, profile)
+        weights = self._optimize(mu, S, profile, pred_map)
 
         # Limit to top max_positions
         weights = dict(sorted(weights.items(), key=lambda x: x[1], reverse=True)[: profile.max_positions])
@@ -109,19 +109,36 @@ class PortfolioOptimizerAgent:
             confidence = pred.confidence
 
             if pred.predicted_label == ReturnLabel.up:
-                views[ticker] = base + confidence * 0.05
+                views[ticker] = base + confidence * 0.15
             elif pred.predicted_label == ReturnLabel.down:
-                views[ticker] = base - confidence * 0.05
+                views[ticker] = base - confidence * 0.15
             # neutral → no view (let prior dominate)
 
         return views
 
-    def _optimize(self, mu: pd.Series, S: pd.DataFrame, profile) -> dict[str, float]:
+    def _optimize(
+        self,
+        mu: pd.Series,
+        S: pd.DataFrame,
+        profile,
+        pred_map: dict | None = None,
+    ) -> dict[str, float]:
         try:
             from pypfopt import EfficientFrontier
             from pypfopt.objective_functions import L2_reg
 
-            ef = EfficientFrontier(mu, S, weight_bounds=(0, settings.max_weight_per_asset))
+            # Assets with a confident negative prediction get a tighter weight cap
+            # so the optimizer can't hide losses behind diversification math.
+            per_asset_bounds = []
+            for ticker in mu.index:
+                pred = pred_map.get(ticker) if pred_map else None
+                if pred and pred.predicted_label == ReturnLabel.down and pred.confidence > 0.45:
+                    upper = min(0.10, settings.max_weight_per_asset)
+                else:
+                    upper = settings.max_weight_per_asset
+                per_asset_bounds.append((0.0, upper))
+
+            ef = EfficientFrontier(mu, S, weight_bounds=per_asset_bounds)
             ef.add_objective(L2_reg, gamma=0.1)
 
             if profile.risk_profile == RiskProfile.conservative:

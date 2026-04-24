@@ -90,7 +90,15 @@ class ReturnPredictorAgent:
         pred_class = str(classes[proba.argmax()])   # cast numpy.str_ → str for ReturnLabel()
         confidence = float(proba.max())
 
-        expected_return_pct = float(ticker_features.get("ret_30d", 0.0))
+        # Forward-looking: direction × confidence × threshold
+        # More meaningful than showing a historical lookback as "predicted return"
+        thresh = settings.effective_return_threshold
+        if pred_class == ReturnLabel.up.value:
+            expected_return_pct = confidence * thresh
+        elif pred_class == ReturnLabel.down.value:
+            expected_return_pct = -confidence * thresh
+        else:
+            expected_return_pct = 0.0
 
         cid = cluster_labels.get(ticker, 0)
         return AssetPrediction(
