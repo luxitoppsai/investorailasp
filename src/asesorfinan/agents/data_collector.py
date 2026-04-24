@@ -102,7 +102,8 @@ class DataCollectorAgent:
 
     def run(self, state: GraphState) -> GraphState:
         profile = state.user_profile
-        tickers = [t for t in settings.default_assets if t not in profile.excluded_assets]
+        asset_pool = profile.custom_assets if profile.custom_assets else settings.default_assets
+        tickers = [t for t in asset_pool if t not in profile.excluded_assets]
         end = date.today()
         # yfinance enforces hard upper limits (e.g. 730 days for 1h) as an exclusive
         # boundary, so requesting exactly max_lookback_days from today will be rejected.

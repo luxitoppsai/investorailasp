@@ -16,6 +16,18 @@ from asesorfinan.models import AdvisorReport, GraphState
 
 logger = logging.getLogger(__name__)
 
+
+def _fmt_horizon(months: float) -> str:
+    days = months * 30
+    if days < 30:
+        d = round(days)
+        return f"{d} día{'s' if d != 1 else ''}"
+    if months < 12:
+        m = round(months)
+        return f"{m} mes{'es' if m != 1 else ''}"
+    years = months / 12
+    return f"{years:.1f} años" if years != round(years) else f"{int(years)} año{'s' if int(years) != 1 else ''}"
+
 _SYSTEM_PROMPT = """\
 Eres un asesor financiero experto y empático. Tu misión es traducir análisis cuantitativos \
 complejos en recomendaciones claras, honestas y accionables para el usuario.
@@ -157,7 +169,7 @@ class LLMAdvisorAgent:
 
 ## Perfil del usuario
 - Capital disponible: ${profile.capital:,.0f} USD
-- Horizonte: {profile.horizon_months} meses
+- Horizonte: {_fmt_horizon(profile.horizon_months)}
 - Perfil de riesgo: {profile.risk_profile.value}
 
 ## Portafolio propuesto

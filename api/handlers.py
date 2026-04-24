@@ -1,4 +1,4 @@
-"""Telegram handlers — conversational flow with inline buttons."""
+"""Telegram handlers — guided conversational flow with inline buttons."""
 
 from __future__ import annotations
 
@@ -25,44 +25,93 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Conversation states
 # ---------------------------------------------------------------------------
-ASK_CAPITAL, ASK_HORIZON, ASK_RISK, ASK_INTERVAL, CONFIRM = range(5)
+ASK_ASSETS, ASK_CUSTOM_TICKERS, ASK_CAPITAL, ASK_INTERVAL, ASK_HORIZON, ASK_RISK, CONFIRM = range(7)
 
-# Serialize runs to avoid concurrent settings writes and OOM on free tier
 _pipeline_lock = asyncio.Lock()
 
-VALID_INTERVALS = {"1m", "2m", "5m", "15m", "30m", "90m", "1h", "1d", "5d", "1wk", "1mo", "3mo"}
-VALID_RISKS = {"conservador", "moderado", "agresivo"}
-
 # ---------------------------------------------------------------------------
-# Keyboards
+# Asset presets
 # ---------------------------------------------------------------------------
+ASSET_PRESETS = {
+    "etf": {
+        "label": "📦 ETFs Diversificados",
+        "tickers": ["SPY", "QQQ", "GLD", "TLT", "BND", "VNQ", "EFA", "IWM", "HYG", "SHY"],
+        "desc": "SPY · QQQ · GLD · TLT · BND y más",
+    },
+    "tech": {
+        "label": "📱 Acciones Tech",
+        "tickers": ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "TSLA"],
+        "desc": "Apple · Microsoft · Google · Amazon · NVIDIA · Tesla",
+    },
+    "mix": {
+        "label": "🌍 Mix ETFs + Acciones",
+        "tickers": ["SPY", "QQQ", "AAPL", "MSFT", "GOOGL", "NVDA", "AMZN", "GLD", "TLT", "TSLA"],
+        "desc": "Combina ETFs con las acciones más grandes del mercado",
+    },
+}
 
-_HORIZON_KB = InlineKeyboardMarkup([
-    [InlineKeyboardButton("1 mes",   callback_data="horizon_1"),
-     InlineKeyboardButton("3 meses", callback_data="horizon_3"),
-     InlineKeyboardButton("6 meses", callback_data="horizon_6")],
-    [InlineKeyboardButton("12 meses", callback_data="horizon_12"),
-     InlineKeyboardButton("24 meses", callback_data="horizon_24"),
-     InlineKeyboardButton("36 meses", callback_data="horizon_36")],
-])
-
-_RISK_KB = InlineKeyboardMarkup([
-    [InlineKeyboardButton("🛡️ Conservador", callback_data="risk_conservador")],
-    [InlineKeyboardButton("⚖️ Moderado",    callback_data="risk_moderado")],
-    [InlineKeyboardButton("🚀 Agresivo",    callback_data="risk_agresivo")],
+_ASSETS_KB = InlineKeyboardMarkup([
+    [InlineKeyboardButton(ASSET_PRESETS["etf"]["label"],  callback_data="assets_etf")],
+    [InlineKeyboardButton(ASSET_PRESETS["tech"]["label"], callback_data="assets_tech")],
+    [InlineKeyboardButton(ASSET_PRESETS["mix"]["label"],  callback_data="assets_mix")],
+    [InlineKeyboardButton("✏️ Elegir mis propios tickers", callback_data="assets_custom")],
 ])
 
 _INTERVAL_KB = InlineKeyboardMarkup([
-    [InlineKeyboardButton("1 hora",  callback_data="interval_1h"),
-     InlineKeyboardButton("1 día",   callback_data="interval_1d")],
-    [InlineKeyboardButton("1 semana",callback_data="interval_1wk"),
-     InlineKeyboardButton("1 mes",   callback_data="interval_1mo")],
+    [InlineKeyboardButton("⚡ 1 hora  — intraday",      callback_data="interval_1h"),
+     InlineKeyboardButton("📅 1 día   — swing trading", callback_data="interval_1d")],
+    [InlineKeyboardButton("📆 1 semana — medio plazo",  callback_data="interval_1wk"),
+     InlineKeyboardButton("🗓️ 1 mes   — largo plazo",  callback_data="interval_1mo")],
+])
+
+_RISK_KB = InlineKeyboardMarkup([
+    [InlineKeyboardButton("🛡️ Conservador — preservar capital, bajo riesgo",  callback_data="risk_conservador")],
+    [InlineKeyboardButton("⚖️ Moderado    — balance entre riesgo y retorno",  callback_data="risk_moderado")],
+    [InlineKeyboardButton("🚀 Agresivo    — maximizar retorno, mayor riesgo",  callback_data="risk_agresivo")],
 ])
 
 _CONFIRM_KB = InlineKeyboardMarkup([
     [InlineKeyboardButton("✅ Analizar", callback_data="confirm"),
      InlineKeyboardButton("❌ Cancelar", callback_data="cancel")],
 ])
+
+
+def _horizon_kb(interval: str) -> InlineKeyboardMarkup:
+    """Return horizon options appropriate for the chosen interval."""
+    if interval in ("1m", "2m", "5m", "15m", "30m", "90m", "1h"):
+        return InlineKeyboardMarkup([
+            [InlineKeyboardButton("1 día",     callback_data="horizon_1d"),
+             InlineKeyboardButton("3 días",    callback_data="horizon_3d"),
+             InlineKeyboardButton("1 semana",  callback_data="horizon_7d")],
+            [InlineKeyboardButton("2 semanas", callback_data="horizon_14d"),
+             InlineKeyboardButton("1 mes",     callback_data="horizon_30d")],
+        ])
+    elif interval in ("1d", "5d"):
+        return InlineKeyboardMarkup([
+            [InlineKeyboardButton("1 mes",   callback_data="horizon_30d"),
+             InlineKeyboardButton("3 meses", callback_data="horizon_90d"),
+             InlineKeyboardButton("6 meses", callback_data="horizon_180d")],
+            [InlineKeyboardButton("1 año",   callback_data="horizon_365d"),
+             InlineKeyboardButton("2 años",  callback_data="horizon_730d")],
+        ])
+    else:  # 1wk, 1mo, 3mo
+        return InlineKeyboardMarkup([
+            [InlineKeyboardButton("6 meses", callback_data="horizon_180d"),
+             InlineKeyboardButton("1 año",   callback_data="horizon_365d")],
+            [InlineKeyboardButton("2 años",  callback_data="horizon_730d"),
+             InlineKeyboardButton("3 años",  callback_data="horizon_1095d")],
+        ])
+
+
+def _fmt_horizon(days: int) -> str:
+    if days < 30:
+        return f"{days} día{'s' if days != 1 else ''}"
+    if days < 365:
+        m = round(days / 30)
+        return f"{m} mes{'es' if m != 1 else ''}"
+    y = days / 365
+    return f"{y:.1f} años" if y != round(y) else f"{int(y)} año{'s' if int(y) != 1 else ''}"
+
 
 # ---------------------------------------------------------------------------
 # App builder
@@ -74,11 +123,13 @@ def build_application(token: str) -> Application:
     conv = ConversationHandler(
         entry_points=[CommandHandler("analizar", cmd_analizar_start)],
         states={
-            ASK_CAPITAL:  [MessageHandler(filters.TEXT & ~filters.COMMAND, recv_capital)],
-            ASK_HORIZON:  [CallbackQueryHandler(recv_horizon,   pattern="^horizon_")],
-            ASK_RISK:     [CallbackQueryHandler(recv_risk,      pattern="^risk_")],
-            ASK_INTERVAL: [CallbackQueryHandler(recv_interval,  pattern="^interval_")],
-            CONFIRM:      [CallbackQueryHandler(recv_confirm,   pattern="^(confirm|cancel)$")],
+            ASK_ASSETS:         [CallbackQueryHandler(recv_assets,          pattern="^assets_")],
+            ASK_CUSTOM_TICKERS: [MessageHandler(filters.TEXT & ~filters.COMMAND, recv_custom_tickers)],
+            ASK_CAPITAL:        [MessageHandler(filters.TEXT & ~filters.COMMAND, recv_capital)],
+            ASK_INTERVAL:       [CallbackQueryHandler(recv_interval,        pattern="^interval_")],
+            ASK_HORIZON:        [CallbackQueryHandler(recv_horizon,         pattern="^horizon_")],
+            ASK_RISK:           [CallbackQueryHandler(recv_risk,            pattern="^risk_")],
+            CONFIRM:            [CallbackQueryHandler(recv_confirm,         pattern="^(confirm|cancel)$")],
         },
         fallbacks=[CommandHandler("cancelar", cmd_cancel)],
         per_user=True,
@@ -91,6 +142,7 @@ def build_application(token: str) -> Application:
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, msg_unknown))
     return app
 
+
 # ---------------------------------------------------------------------------
 # Non-conversation commands
 # ---------------------------------------------------------------------------
@@ -98,17 +150,19 @@ def build_application(token: str) -> Application:
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         "👋 *Bienvenido a AsesorFinan*\n\n"
-        "Usá /analizar para generar un análisis de portafolio con ML\\.\n"
-        "Usá /help para ver los comandos\\.",
+        "Analizá portafolios con inteligencia artificial y ML\\.\n\n"
+        "Usá /analizar para comenzar o /help para ver los comandos\\.",
         parse_mode="MarkdownV2",
     )
 
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
-        "*AsesorFinan* — Asesor financiero con ML 🤖\n\n"
-        "• /analizar — Iniciar análisis guiado paso a paso\n"
+        "*AsesorFinan* 🤖\n\n"
+        "• /analizar — Iniciar análisis guiado\n"
         "• /cancelar — Cancelar el análisis en curso\n"
-        "• /help — Mostrar esta ayuda",
+        "• /help — Esta ayuda\n\n"
+        "_El bot te guía paso a paso: elegís activos, capital, "
+        "intervalo de análisis, horizonte y perfil de riesgo._",
         parse_mode="Markdown",
     )
 
@@ -120,19 +174,80 @@ async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text("❌ Análisis cancelado.")
     return ConversationHandler.END
 
+
 # ---------------------------------------------------------------------------
-# Conversation steps
+# Step 1 — Asset selection
 # ---------------------------------------------------------------------------
 
 async def cmd_analizar_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data.clear()
     await update.message.reply_text(
-        "💰 *¿Cuánto capital querés invertir?*\n\n"
-        "Escribí el monto en USD \\(ej: `10000`\\)",
-        parse_mode="MarkdownV2",
+        "📈 *¿Qué activos querés analizar?*\n\n"
+        "• *ETFs Diversificados* — fondos indexados clásicos (SPY, QQQ, GLD…)\n"
+        "• *Acciones Tech* — las grandes tecnológicas (Apple, Google, Tesla…)\n"
+        "• *Mix* — combina ETFs con las acciones más importantes\n"
+        "• *Personalizados* — escribís los tickers que quieras",
+        parse_mode="Markdown",
+        reply_markup=_ASSETS_KB,
+    )
+    return ASK_ASSETS
+
+
+async def recv_assets(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+
+    choice = query.data.split("_")[1]  # etf | tech | mix | custom
+
+    if choice == "custom":
+        await query.edit_message_text(
+            "✏️ *Escribí los tickers separados por espacios*\n\n"
+            "Ejemplos: `TSLA GOOGL AAPL MSFT AMZN NVDA`\n\n"
+            "_Podés usar cualquier ticker válido de Yahoo Finance_",
+            parse_mode="Markdown",
+        )
+        return ASK_CUSTOM_TICKERS
+
+    preset = ASSET_PRESETS[choice]
+    context.user_data["tickers"] = preset["tickers"]
+    context.user_data["assets_label"] = preset["label"]
+
+    await query.edit_message_text(
+        f"{preset['label']}\n_{preset['desc']}_\n\n"
+        f"💰 *¿Cuánto capital querés invertir?*\n"
+        f"Escribí el monto en USD (ej: `10000`)",
+        parse_mode="Markdown",
     )
     return ASK_CAPITAL
 
+
+async def recv_custom_tickers(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    raw = update.message.text.upper().split()
+    tickers = [t.strip() for t in raw if t.strip()]
+
+    if len(tickers) < 2:
+        await update.message.reply_text(
+            "❌ Necesitás al menos 2 tickers para armar un portafolio.\n"
+            "Ej: `TSLA GOOGL AAPL MSFT`",
+            parse_mode="Markdown",
+        )
+        return ASK_CUSTOM_TICKERS
+
+    context.user_data["tickers"] = tickers
+    context.user_data["assets_label"] = f"✏️ {' · '.join(tickers[:5])}{'…' if len(tickers) > 5 else ''}"
+
+    await update.message.reply_text(
+        f"✅ Tickers: *{' · '.join(tickers)}*\n\n"
+        f"💰 *¿Cuánto capital querés invertir?*\n"
+        f"Escribí el monto en USD (ej: `10000`)",
+        parse_mode="Markdown",
+    )
+    return ASK_CAPITAL
+
+
+# ---------------------------------------------------------------------------
+# Step 2 — Capital
+# ---------------------------------------------------------------------------
 
 async def recv_capital(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     text = update.message.text.replace(",", "").replace("$", "").strip()
@@ -149,47 +264,21 @@ async def recv_capital(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
 
     context.user_data["capital"] = capital
     await update.message.reply_text(
-        f"✅ Capital: *${capital:,.0f}*\n\n📅 *¿Cuál es tu horizonte de inversión?*",
-        parse_mode="Markdown",
-        reply_markup=_HORIZON_KB,
-    )
-    return ASK_HORIZON
-
-
-async def recv_horizon(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    query = update.callback_query
-    await query.answer()
-
-    horizon = int(query.data.split("_")[1])
-    context.user_data["horizon"] = horizon
-
-    await query.edit_message_text(
-        f"✅ Capital: *${context.user_data['capital']:,.0f}* · Horizonte: *{horizon} meses*\n\n"
-        f"⚖️ *¿Cuál es tu perfil de riesgo?*",
-        parse_mode="Markdown",
-        reply_markup=_RISK_KB,
-    )
-    return ASK_RISK
-
-
-async def recv_risk(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    query = update.callback_query
-    await query.answer()
-
-    risk = query.data.split("_")[1]
-    context.user_data["risk"] = risk
-
-    risk_emoji = {"conservador": "🛡️", "moderado": "⚖️", "agresivo": "🚀"}.get(risk, "")
-    await query.edit_message_text(
-        f"✅ Capital: *${context.user_data['capital']:,.0f}* · "
-        f"Horizonte: *{context.user_data['horizon']} meses* · "
-        f"Riesgo: *{risk_emoji} {risk.capitalize()}*\n\n"
-        f"📊 *¿Qué intervalo de análisis querés usar?*",
+        f"✅ Capital: *${capital:,.0f}*\n\n"
+        f"📊 *¿Con qué granularidad querés analizar?*\n\n"
+        f"• *1 hora* — ideal para ver movimientos del día\n"
+        f"• *1 día* — el estándar para swing trading y portafolios\n"
+        f"• *1 semana* — tendencias de mediano plazo\n"
+        f"• *1 mes* — visión estratégica de largo plazo",
         parse_mode="Markdown",
         reply_markup=_INTERVAL_KB,
     )
     return ASK_INTERVAL
 
+
+# ---------------------------------------------------------------------------
+# Step 3 — Interval
+# ---------------------------------------------------------------------------
 
 async def recv_interval(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
@@ -198,19 +287,84 @@ async def recv_interval(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     interval = query.data.split("_")[1]
     context.user_data["interval"] = interval
 
+    interval_labels = {
+        "1h": "⚡ 1 hora", "1d": "📅 1 día",
+        "1wk": "📆 1 semana", "1mo": "🗓️ 1 mes",
+    }
+    label = interval_labels.get(interval, interval)
+
+    await query.edit_message_text(
+        f"✅ Capital: *${context.user_data['capital']:,.0f}* · Intervalo: *{label}*\n\n"
+        f"📅 *¿Cuál es tu horizonte?*\n\n"
+        f"_¿Por cuánto tiempo planeás mantener esta inversión?_",
+        parse_mode="Markdown",
+        reply_markup=_horizon_kb(interval),
+    )
+    return ASK_HORIZON
+
+
+# ---------------------------------------------------------------------------
+# Step 4 — Horizon (adaptive)
+# ---------------------------------------------------------------------------
+
+async def recv_horizon(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+
+    days = int(query.data.split("_")[1].replace("d", ""))
+    context.user_data["horizon_days"] = days
+
+    interval_labels = {
+        "1h": "⚡ 1h", "1d": "📅 1d",
+        "1wk": "📆 1sem", "1mo": "🗓️ 1mes",
+    }
+    iv_label = interval_labels.get(context.user_data["interval"], context.user_data["interval"])
+
+    await query.edit_message_text(
+        f"✅ Capital: *${context.user_data['capital']:,.0f}* · "
+        f"Intervalo: *{iv_label}* · "
+        f"Horizonte: *{_fmt_horizon(days)}*\n\n"
+        f"⚖️ *¿Cuál es tu perfil de riesgo?*",
+        parse_mode="Markdown",
+        reply_markup=_RISK_KB,
+    )
+    return ASK_RISK
+
+
+# ---------------------------------------------------------------------------
+# Step 5 — Risk profile
+# ---------------------------------------------------------------------------
+
+async def recv_risk(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+
+    risk = query.data.split("_")[1]
+    context.user_data["risk"] = risk
+
     d = context.user_data
-    risk_emoji = {"conservador": "🛡️", "moderado": "⚖️", "agresivo": "🚀"}.get(d["risk"], "")
+    risk_emoji = {"conservador": "🛡️", "moderado": "⚖️", "agresivo": "🚀"}.get(risk, "")
+    interval_labels = {
+        "1h": "⚡ 1h", "1d": "📅 1d", "1wk": "📆 1sem", "1mo": "🗓️ 1mes",
+    }
+    iv_label = interval_labels.get(d["interval"], d["interval"])
+
     await query.edit_message_text(
         f"*Confirmá tu análisis:*\n\n"
+        f"📦 Activos: {d['assets_label']}\n"
         f"💰 Capital: *${d['capital']:,.0f}*\n"
-        f"📅 Horizonte: *{d['horizon']} meses*\n"
-        f"⚖️ Riesgo: *{risk_emoji} {d['risk'].capitalize()}*\n"
-        f"📊 Intervalo: *{interval}*",
+        f"📊 Intervalo: *{iv_label}*\n"
+        f"📅 Horizonte: *{_fmt_horizon(d['horizon_days'])}*\n"
+        f"⚖️ Riesgo: *{risk_emoji} {risk.capitalize()}*",
         parse_mode="Markdown",
         reply_markup=_CONFIRM_KB,
     )
     return CONFIRM
 
+
+# ---------------------------------------------------------------------------
+# Step 6 — Confirm & run
+# ---------------------------------------------------------------------------
 
 async def recv_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
@@ -222,9 +376,12 @@ async def recv_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         return ConversationHandler.END
 
     d = context.user_data
+    horizon_months = max(0.03, d["horizon_days"] / 30)
+
     await query.edit_message_text(
         f"⏳ *Analizando...*\n\n"
-        f"💰 ${d['capital']:,.0f} · {d['horizon']}m · {d['risk']} · {d['interval']}\n\n"
+        f"{d['assets_label']} · ${d['capital']:,.0f} · "
+        f"{_fmt_horizon(d['horizon_days'])} · {d['risk']}\n\n"
         f"_Esto puede tardar 30–90 segundos._",
         parse_mode="Markdown",
     )
@@ -233,10 +390,10 @@ async def recv_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         settings.data_interval = d["interval"]
         profile = UserProfile(
             capital=d["capital"],
-            horizon_months=d["horizon"],
+            horizon_months=horizon_months,
             risk_profile=RiskProfile(d["risk"]),
-            excluded_assets=[],
-            max_positions=10,
+            custom_assets=d["tickers"],
+            max_positions=min(10, len(d["tickers"])),
         )
         try:
             loop = asyncio.get_event_loop()
@@ -260,8 +417,9 @@ async def recv_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
 
     return ConversationHandler.END
 
+
 # ---------------------------------------------------------------------------
-# Formatting
+# Result formatting
 # ---------------------------------------------------------------------------
 
 def _format_result(state) -> str:

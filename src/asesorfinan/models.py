@@ -37,10 +37,11 @@ class RiskSignal(str, Enum):
 
 class UserProfile(BaseModel):
     capital: float = Field(..., gt=0, description="Capital disponible en USD")
-    horizon_months: int = Field(..., ge=1, le=120, description="Horizonte de inversión en meses")
+    horizon_months: float = Field(..., gt=0, le=120, description="Horizonte de inversión en meses (puede ser fracción para días)")
     risk_profile: RiskProfile
     excluded_assets: list[str] = Field(default_factory=list)
     max_positions: int = Field(default=10, ge=2, le=20)
+    custom_assets: list[str] = Field(default_factory=list, description="Tickers personalizados; si está vacío usa default_assets de config")
 
 
 # ---------------------------------------------------------------------------
